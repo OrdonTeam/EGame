@@ -34,6 +34,12 @@ class EController(val repository: ERepository) {
     @GetMapping("/summonFleet")
     fun summonFleet(sender: String, size: Long) = onState(sender) { it.summonFleet(size) }
 
+    @GetMapping("/sendFleet")
+    fun sendFleet(sender: String, target: String) = onState(sender) { it.sendFleet(target) }
+
+    @GetMapping("/battle")
+    fun battle(sender: String, attacker: String, defender: String) = onState(sender) { it.battle(attacker, defender) }
+
     @GetMapping("/buildingPrice")
     fun buildingPrice(level: Long) = view { it.buildingPrice(level) }
 
@@ -96,11 +102,16 @@ class EGame(private val state: GameState, private val block: Block, private val 
     }
 
     fun updateBalance() {
+        updateUserBalance(msg.sender)
+    }
+
+    private fun updateUserBalance(user: String): Long {
         val number = block.number
-        val increase = (number - state.balancesUpdate[msg.sender]!!) * state.buildings[msg.sender]!!
-        val newBalance = state.balances[msg.sender]!! + increase
-        state.balances[msg.sender] = newBalance
-        state.balancesUpdate[msg.sender] = number
+        val increase = (number - state.balancesUpdate[user]!!) * state.buildings[user]!!
+        val newBalance = state.balances[user]!! + increase
+        state.balances[user] = newBalance
+        state.balancesUpdate[user] = number
+        return newBalance
     }
 
     fun summonFleet(size: Long) {
@@ -115,6 +126,65 @@ class EGame(private val state: GameState, private val block: Block, private val 
                     landingTime = block.number + 20
             )
         }
+    }
+
+    fun sendFleet(target: String) {
+        val fleet = state.fleets[msg.sender]!!
+        assert(fleet.orbitingTime <= block.number)
+        state.fleets[msg.sender] = Fleet(
+                position = target,
+                size = fleet.size,
+                orbitingTime = block.number + 10,
+                landingTime = block.number + 20
+        )
+    }
+
+    fun battle(attacker: String, defender: String) {
+        val attackerFleet = state.fleets[attacker]!!
+        val defenderFleet = state.fleets[defender]!!
+        assert(attackerFleet.position == defender)
+        assert(attackerFleet.landingTime >= block.number)
+        if (defenderFleet.position == defender && defenderFleet.landingTime >= block.number) {
+            //defender present
+            val defenderSurvived = decreaseFleetSize(defenderFleet.size, attackerFleet.size)
+            val attackerSurvived = decreaseFleetSize(attackerFleet.size, defenderFleet.size)
+            if (defenderSurvived == 0L) {
+                transfer(defender, attacker, attackerSurvived)
+            }
+            state.fleets[defender] = Fleet(
+                    position = defender,
+                    size = defenderSurvived,
+                    orbitingTime = block.number + 10,
+                    landingTime = block.number + 20
+            )
+            state.fleets[attacker] = Fleet(
+                    position = attacker,
+                    size = attackerSurvived,
+                    orbitingTime = block.number + 10,
+                    landingTime = block.number + 20
+            )
+        } else {
+            //defender absent
+            transfer(defender, attacker, attackerFleet.size)
+            state.fleets[attacker] = Fleet(
+                    position = attacker,
+                    size = attackerFleet.size,
+                    orbitingTime = block.number + 10,
+                    landingTime = block.number + 20
+            )
+        }
+    }
+
+    private fun decreaseFleetSize(size: Long, opponentSize: Long): Long {
+        return maxOf(0, minOf(size, size + size - opponentSize))
+    }
+
+    private fun transfer(from: String, to: String, max: Long) {
+        val fromBalance = updateUserBalance(from)
+        val toBalance = updateUserBalance(to)
+        val transfer = Math.min(fromBalance, max)
+        state.balances[to] = toBalance - transfer
+        state.balances[from] = fromBalance + transfer
     }
 }
 
